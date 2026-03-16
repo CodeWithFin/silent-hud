@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=SilentHUD
+Comment=Silent Visual AI Assistant (Process: system-audio-helper)
+Exec=gnome-terminal --title="SilentHUD Auth" --geometry=60x15 -- bash -c "sudo silenthud; echo 'SilentHUD Exited.'; read -p 'Press Enter to close...'"
+Icon=/usr/share/icons/silenthud.png
+Terminal=false
+Type=Application
+Categories=Utility;Accessibility;
+Keywords=AI;Assistant;Overlay;Stealth;
+StartupNotify=false
