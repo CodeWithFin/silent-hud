@@ -1,110 +1,89 @@
 """
-SilentHUD - Groq LLM Client
-Handles communication with Groq API for generating responses.
+SilentHUD - Anthropic LLM Client
+Handles communication with Anthropic's Claude API for generating responses.
 """
 
 import os
 from typing import Optional
-from groq import Groq
+from anthropic import Anthropic
 from dotenv import load_dotenv
 from PIL import Image
-
+import base64
+import io
 
 # Load environment variables
 load_dotenv()
 
-# EMBEDDED KEYS REMOVED (Use environment variables: GROQ_API_KEY, GEMINI_API_KEY)
-EMBEDDED_GROQ_KEY = None
-EMBEDDED_GEMINI_KEY = None
+# EMBEDDED KEYS
+EMBEDDED_ANTHROPIC_KEY = None
 
 class LLMClient:
     """
-    Client for interacting with Groq API.
+    Client for interacting with Anthropic API (Claude).
     Designed for concise, helpful responses suitable for overlay display.
     """
     
-    # System prompt optimized for brief, direct answers
-    # System prompt optimized for helpful, educational answers
-    DEFAULT_SYSTEM_PROMPT = """You are SilentHUD, an intelligent, concise AI assistant.
+    DEFAULT_SYSTEM_PROMPT = """You are SilentHUD, an intelligent, concise AI assistant tailored for coding and general tasks.
 **Your Goal:** Provide direct, helpful answers to the user's questions.
 - If the user asks a question, answer it clearly.
-- If the user shows code, explain or fix it.
-- If the user shows an image, analyze it.
+- If the user shows code, explain or fix it using markdown format.
+- If the user shows an image, analyze it contextually.
 - **Keep responses concise** and suitable for a HUD overlay.
-- Do NOT hallucinate conversational filler ("Sure, I can help with that"). Just answer.
-"""
+- Do NOT hallucinate conversational filler ("Sure, I can help with that", "Here is the code"). Just answer directly."""
 
-    def __init__(self, api_key: Optional[str] = None, model: str = "llama-3.3-70b-versatile"):
+    def __init__(self, api_key: Optional[str] = None, model: str = "claude-sonnet-4-6"):
         """
-        Initialize the LLM client.
+        Initialize the Claude client.
         
         Args:
-            api_key: Groq API key. If None, reads from GROQ_API_KEY env var.
-            model: Model to use for completions.
+            api_key: Anthropic API key. If None, reads from ANTHROPIC_API_KEY env var.
+            model: Model to use for completions. Defaults to latest sonnet.
         """
-
-        self.api_key = api_key or os.getenv("GROQ_API_KEY") or EMBEDDED_GROQ_KEY
+        self.api_key = api_key or os.getenv("ANTHROPIC_API_KEY") or EMBEDDED_ANTHROPIC_KEY
         if not self.api_key:
-            raise ValueError("GROQ_API_KEY not found (and embedded key missing)")
+            raise ValueError("ANTHROPIC_API_KEY not found in .env and not provided.")
             
         self.model = model
-        self.client = Groq(api_key=self.api_key)
+        self.client = Anthropic(api_key=self.api_key)
         self.system_prompt = self.DEFAULT_SYSTEM_PROMPT
         self.history = []  # Conversation history buffer
         
-    def get_response(self, prompt: str, max_tokens: int = 500) -> str:
+    def get_response(self, prompt: str, max_tokens: int = 1000) -> str:
         """
-        Get a response from the LLM.
-        
-        Args:
-            prompt: The user's question or captured text
-            max_tokens: Maximum response length
-            
-        Returns:
-            The LLM's response text
+        Get a response from the LLM for text.
         """
         try:
-            # Build messages with history
-            messages = [{"role": "system", "content": self.system_prompt}]
-            messages.extend(self.history)
+            # Claude handles system prompt separately, history is strictly user/assistant
+            messages = list(self.history)
             messages.append({"role": "user", "content": prompt})
 
-            completion = self.client.chat.completions.create(
+            response = self.client.messages.create(
                 model=self.model,
+                system=self.system_prompt,
                 messages=messages,
                 max_tokens=max_tokens,
                 temperature=0.7,
             )
             
-            response = completion.choices[0].message.content.strip()
+            # Anthropic returns a list of ContentBlocks
+            response_text = response.content[0].text.strip()
             
             # Update History
             self.history.append({"role": "user", "content": prompt})
-            self.history.append({"role": "assistant", "content": response})
+            self.history.append({"role": "assistant", "content": response_text})
             if len(self.history) > 20: self.history = self.history[-20:]
             
-            return response
+            return response_text
             
         except Exception as e:
-            return f"❌ Error: {str(e)}"
+            return f"❌ Claude Text API Error: {str(e)}"
             
     def get_response_for_question(self, captured_text: str) -> str:
-        """
-        Process captured text as a question and get an answer.
-        Adds context to help the LLM understand the task.
-        
-        Args:
-            captured_text: Text captured from screen via OCR
-            
-        Returns:
-            The LLM's response
-        """
-        # Format the prompt
-        prompt = f"""The following text was captured from screen:
+        """Process text captured via OCR."""
+        prompt = f"""The following text was captured from my screen:
 {captured_text}
 
 ---
-**INSTRUCTION:**
 **INSTRUCTION:**
 Analyze the text above.
 - If it is a **Question**, answer it directly.
@@ -113,135 +92,85 @@ Analyze the text above.
 Answer concisely."""
         
         return self.get_response(prompt)
-        
-    def set_system_prompt(self, prompt: str):
-        """Update the system prompt."""
-        self.system_prompt = prompt
 
-    def get_response_for_image(self, image_input, prompt: str = "Solve this.") -> str:
+    def get_response_for_image(self, image_input, prompt: str = "Analyze this image and solve any problem.") -> str:
         """
-        Process visual input using Groq Vision (Llama 4 Scout).
-        Args:
-            image_input: PIL Image or path
-            prompt: Question about image
+        Process visual input using Claude 3.5 Sonnet.
         """
-        import base64
-        import io
-        from PIL import Image
-
         try:
-            # Convert PIL to Base64
+            # Convert PIL Image to Base64
             buffered = io.BytesIO()
             if isinstance(image_input, Image.Image):
                 image_input.save(buffered, format="PNG")
                 img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
             else:
-                return "❌ Error: Invalid image input"
+                return "❌ Error: Invalid image input for Claude"
 
-            # Call Groq Vision Model with History
-            messages = []
+            messages = list(self.history)
             
-            # Add System Prompt if needed (though Vision models sometimes ignore it, it helps context)
-            if self.system_prompt:
-                messages.append({"role": "system", "content": self.system_prompt})
-                
-            # Add Conversation History
-            messages.extend(self.history)
-            
-            # Add Current User Message (Text + Image)
             current_user_message = {
                 "role": "user",
                 "content": [
                     {
-                        "type": "text",
-                        "text": prompt
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "image/png",
+                            "data": img_str
+                        }
                     },
                     {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/png;base64,{img_str}"
-                        }
+                        "type": "text",
+                        "text": prompt
                     }
                 ]
             }
             messages.append(current_user_message)
 
-            completion = self.client.chat.completions.create(
-                model="meta-llama/llama-4-scout-17b-16e-instruct",
+            response = self.client.messages.create(
+                model=self.model,
+                system=self.system_prompt, # Re-inject system rules for vision
                 messages=messages,
                 temperature=0.1,
-                max_tokens=1024
+                max_tokens=1000
             )
             
-            response_text = completion.choices[0].message.content.strip()
+            response_text = response.content[0].text.strip()
             
-            # Update History (Store TEXT ONLY to save tokens/complexity)
-            # We don't store the base64 image in history.
+            # Store only text to save history token size
             self.history.append({"role": "user", "content": prompt})
             self.history.append({"role": "assistant", "content": response_text})
             
-            # Limit history to last 10 turns to prevent context explosion
             if len(self.history) > 20: 
                 self.history = self.history[-20:]
                 
             return response_text
 
         except Exception as e:
-            return f"❌ Vision Error: {str(e)}"
-
+            return f"❌ Claude Vision Error: {str(e)}"
 
     def get_transcription(self, audio_filepath: str) -> str:
-        """Transcribe audio file using Groq Whisper."""
-        try:
-            with open(audio_filepath, "rb") as file_obj:
-                transcription = self.client.audio.transcriptions.create(
-                    file=(os.path.basename(audio_filepath), file_obj),
-                    model="whisper-large-v3",
-                    response_format="json",
-                    language="en",
-                    temperature=0.0
-                )
-            return transcription.text.strip()
-        except Exception as e:
-            return f"❌ Transcription Error: {str(e)}"
+        return "Audio transcription is currently disabled (Anthropic backend selected)."
 
 # Global clients
-_groq_client: Optional[LLMClient] = None
+_llm_client: Optional[LLMClient] = None
 
-def get_groq_client() -> LLMClient:
-    global _groq_client
-    if _groq_client is None:
-        _groq_client = LLMClient()
-    return _groq_client
+def get_llm_client() -> LLMClient:
+    global _llm_client
+    if _llm_client is None:
+        _llm_client = LLMClient()
+    return _llm_client
 
 def answer_captured_text(captured_text: str) -> str:
-    """Legacy text-only answer (uses Groq)."""
-    return get_groq_client().get_response_for_question(captured_text)
+    """Legacy text-only answer."""
+    return get_llm_client().get_response_for_question(captured_text)
 
 def answer_captured_image(image, prompt: str = "Analyze this image and solve any problem.") -> str:
     """
-    Answer based on Visual Input (uses Groq Vision).
+    Answer based on Visual Input using Claude.
     """
-    return get_groq_client().get_response_for_image(image, prompt)
+    return get_llm_client().get_response_for_image(image, prompt)
 
 def answer_audio_question(audio_path: str) -> str:
-    """
-    Transcribe audio and answer the question using History.
-    """
-    client = get_groq_client()
-    
-    # 1. Transcribe
-    transcript = client.get_transcription(audio_path)
-    if not transcript or "Error" in transcript:
-        return f"Could not hear question: {transcript}"
-        
-    # 2. Add to history and answer
-    # 2. Add to history and answer
-    # We treat it like a direct conversation
-    answer = client.get_response(transcript)
-    
-    # Update history manually since get_response_for_question might not (depends on impl)
-    # Actually get_response_for_question uses get_response which uses system prompt but maybe not history logic I added to vision?
-    # Let's fix get_response to use history too!
-    
-    return f"🗣️ **You asked:** \"{transcript}\"\n\n{answer}"
+    """Disabled for Anthropic backend."""
+    return "🎤 *Audio mode is currently disabled in this Claude implementation workflow. Use Text or Snippet mode.*"
