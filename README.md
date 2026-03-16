@@ -75,4 +75,6 @@ SilentHUD/
 - Uses `keyboard` library for global hotkeys without focus theft
 - Tesseract OCR with image preprocessing for better accuracy
 - Async processing to keep UI responsive during OCR/LLM calls
-# silent-hud
+
+## 🛡️ Safe Mode
+If the application is run in an environment without low-level input access (like some containers or WSL), it will enter **Safe Mode**. In this mode, global hotkeys are disabled to prevent crashes, allowing you to still use the core logic and GUI for research and debugging.
